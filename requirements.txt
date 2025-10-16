@@ -1,0 +1,6 @@
+pandas
+geopandas
+sqlalchemy
+psycopg2-binary 
+tqdm
+chardet
