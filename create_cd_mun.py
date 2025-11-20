@@ -6,9 +6,9 @@ pd.set_option('display.max_columns', None)
 pd.set_option('display.max_colwidth', None)
 pd.set_option('display.width', None)
 
-dados_geo_municipio = gpd.read_file("dados_ref/PR_Municipios_2024/PR_Municipios_2024.shp")
+dados_geo_municipio = gpd.read_file("./dados/PR_Municipios_2024/PR_Municipios_2024.shp")
 
-dados_cd_municipio = pd.read_csv("./dados/relacao_codigos_mun.csv")
+dados_cd_municipio = pd.read_csv("./dados/mapa-cod-municipio.csv")
 
 dados_geo_municipio['CD_MUN'] = dados_geo_municipio['CD_MUN'].astype(int)
 dados_cd_municipio['id_municipio_ibge'] = dados_cd_municipio['id_municipio_ibge'].astype(int)
@@ -38,4 +38,4 @@ df_merged = df_merged.drop(columns=['CD_MUN'])
 # removendo as colunas CD_CONCU e NM_CONCU e reordenando
 df_merged = df_merged[['CD_MUN_TSE', 'CD_MUN_IBG', 'NM_MUN', 'CD_RGI', 'NM_RGI', 'CD_RGINT', 'NM_RGINT', 'CD_UF', 'NM_UF', 'SIGLA_UF', 'CD_REGIA', 'NM_REGIA', 'SIGLA_RG', 'AREA_KM2', 'geometry']]
 
-df_merged.to_file(r"D:\Códigos-VS\UFMG\2025-2\BDG\tp-p1\dados\PR_Municipios_2024_new\PR_Municipios_2024.shp", driver='ESRI Shapefile')
+df_merged.to_file(r"C:\Users\ruben\Desktop\Codigos-VScode\UFMG\BancoDadosGeo\TP-BDG\dados\PR_Municipios_2024_new\PR_Municipios_2024.shp", driver='ESRI Shapefile')

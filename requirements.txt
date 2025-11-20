@@ -6,3 +6,10 @@ tqdm
 chardet
 geoalchemy2
 dotenv
+matplotlib
+seaborn 
+mapclassify
+contextily
+esda 
+libpysal 
+splot

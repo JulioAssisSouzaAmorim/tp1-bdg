@@ -1,4 +1,7 @@
 bdg-tp
 dados
+dados_info
 shapefiles
 dados_ref
+processed_data
+__pycache__
