@@ -13,3 +13,5 @@ contextily
 esda 
 libpysal 
 splot
+mgwr
+scikit-learn

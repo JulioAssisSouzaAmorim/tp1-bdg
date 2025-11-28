@@ -1,23 +1,24 @@
 import psycopg2
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 import geopandas as gpd
 from config import DB_CONFIG, PROCESSED_FILES, FILES
 
 class DatabaseManager:
     def __init__(self):
-        self.schema = DB_CONFIG.get('schema', 'public')
+        # Carrega a configuração do arquivo config.py
+        self.db_config = DB_CONFIG
+        self.schema = self.db_config.get('schema', 'public')
         
         # String de conexão para SQLAlchemy
-        self.conn_str = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['dbname']}"
+        self.conn_str = f"postgresql://{self.db_config['user']}:{self.db_config['password']}@{self.db_config['host']}:{self.db_config['port']}/{self.db_config['dbname']}"
         
         # Conexão Psycopg2
         self.conn = psycopg2.connect(
-            dbname=DB_CONFIG['dbname'],
-            user=DB_CONFIG['user'],
-            password=DB_CONFIG['password'],
-            host=DB_CONFIG['host'],
-            port=DB_CONFIG['port'],
-            # Dica: Configura o search_path na conexão para facilitar o COPY
+            dbname=self.db_config['dbname'],
+            user=self.db_config['user'],
+            password=self.db_config['password'],
+            host=self.db_config['host'],
+            port=self.db_config['port'],
             options=f"-c search_path={self.schema},public"
         )
         self.cur = self.conn.cursor()
@@ -39,11 +40,10 @@ class DatabaseManager:
         
         queries = [
             f"""
-            DROP TABLE IF EXISTS {self.schema}.resultados_secao;
-            CREATE TABLE {self.schema}.resultados_secao (
-                cd_municipio int, nm_municipio varchar, nr_zona int, nr_secao int,
-                nr_votavel int, nm_votavel varchar, qt_votos int, sq_candidato bigint,
-                nr_local_votacao int, nm_local_votacao varchar, ds_local_votacao_endereco varchar
+            DROP TABLE IF EXISTS {self.schema}.votacao_dep_traiano;
+            CREATE TABLE {self.schema}.votacao_dep_traiano (
+                id_municipio int,
+                percentual_traiano float
             );
             """,
             f"""
@@ -59,25 +59,14 @@ class DatabaseManager:
             CREATE TABLE {self.schema}.censo_sec (
                 id_municipio int, id_setor_censitario bigint, pessoas int,
                 domicilios int, media_moradores_domicilios float, area float,
-                geom geography
+                geometria text -- Alterado para text para evitar problemas com geography
             );
             """,
             f"""
-            DROP TABLE IF EXISTS {self.schema}.mun_zona_sec_local;
-            CREATE TABLE {self.schema}.mun_zona_sec_local (
-                id_municipio int, zona int, secao int, geom geography
-            );
-            """,
-            f"""
-            DROP TABLE IF EXISTS {self.schema}.rais;
-            CREATE TABLE {self.schema}.rais (
-                ano int, sigla_uf varchar, id_municipio int, tipo_vinculo int,
-                vinculo_ativo_3112 int, tipo_admissao int, tempo_emprego float,
-                quantidade_horas_contratadas int, valor_remuneracao_media_sm float,
-                valor_remuneracao_dezembro_sm float, cbo_2002 int, cnae_2 int,
-                cnae_2_subclasse int, idade int, grau_instrucao_apos_2005 int,
-                nacionalidade int, sexo int, raca_cor int, indicador_portador_deficiencia int,
-                tipo_deficiencia int
+            DROP TABLE IF EXISTS {self.schema}.rais_agg;
+            CREATE TABLE {self.schema}.rais_agg (
+                id_municipio int,
+                remuneracao_media float
             );
             """,
             f"""
@@ -97,35 +86,45 @@ class DatabaseManager:
     def load_csv_data(self):
         print(f"Carregando CSVs no schema '{self.schema}'...")
         
-        mappings = [
-            (PROCESSED_FILES["votacao"], "resultados_secao"),
+        # Mapeamento para arquivos SEM cabeçalho
+        mappings_no_header = [
             (PROCESSED_FILES["censo_mun"], "censo_mun"),
             (PROCESSED_FILES["censo_sec"], "censo_sec"),
-            #(PROCESSED_FILES["locais_votacao"], "mun_zona_sec_local"),
-            (PROCESSED_FILES["rais"], "rais"),
             (PROCESSED_FILES["extra"], "extra"),
         ]
 
-        for file_path, table_name in mappings:
-            print(f"-> Carregando {table_name}...")
-            with open(file_path, "r", encoding="utf-8") as f: 
-                try:
-                    # IMPORTANTE: Como definimos 'options="-c search_path=..."' na conexão,
-                    # o copy_from vai procurar a tabela no schema correto automaticamente.
-                    # Se não tivesse definido lá, teria que usar f"{self.schema}.{table_name}" aqui.
+        for file_path, table_name in mappings_no_header:
+            print(f"-> Carregando {table_name} (sem header)...")
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
                     self.cur.copy_from(f, table=table_name, sep=";")
                     self.conn.commit()
-                except Exception as e:
-                    print(f"Erro ao carregar {table_name}: {e}")
-                    self.conn.rollback()
+            except Exception as e:
+                print(f"Erro ao carregar {table_name}: {e}")
+                self.conn.rollback()
+
+        # Tratamento especial para arquivos COM header
+        mappings_with_header = [
+            (PROCESSED_FILES["votacao_dep_traiano"], "votacao_dep_traiano"),
+            (PROCESSED_FILES["rais"], "rais_agg"),
+        ]
+        
+        for file_path, table_name in mappings_with_header:
+            print(f"-> Carregando {table_name} (com header)...")
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    copy_sql = f"COPY {self.schema}.{table_name} FROM STDIN WITH CSV HEADER DELIMITER ';'"
+                    self.cur.copy_expert(sql=copy_sql, file=f)
+                    self.conn.commit()
+            except Exception as e:
+                print(f"Erro ao carregar {table_name}: {e}")
+                self.conn.rollback()
 
     def load_shapefiles(self):
         print(f"Carregando Shapefiles no schema '{self.schema}'...")
         
         shp_mappings = [
-            (FILES["shp_mun"], "geo_mun"),
-            (FILES["shp_reg_ime"], "geo_reg_ime"),
-            (FILES["shp_reg_int"], "geo_reg_int")
+            (FILES["shp_mun"], "municipios_pr_2022"),
         ]
 
         for file_path, table_name in shp_mappings:
@@ -133,12 +132,10 @@ class DatabaseManager:
             try:
                 gdf = gpd.read_file(file_path)
                 
-                # AQUI ESTÁ O PULO DO GATO PARA GEOPANDAS:
-                # Use o parâmetro 'schema'
                 gdf.to_postgis(
                     table_name, 
                     self.engine, 
-                    schema=self.schema,  # <--- Especifica o schema aqui
+                    schema=self.schema,
                     if_exists="replace", 
                     index=False
                 )
