@@ -2,6 +2,7 @@ import psycopg2
 from sqlalchemy import create_engine
 import geopandas as gpd
 from config import DB_CONFIG, PROCESSED_FILES, FILES
+import importlib
 
 class DatabaseManager:
     def __init__(self):
@@ -38,12 +39,17 @@ class DatabaseManager:
         # prefixar com o schema aqui, mas é uma boa prática para DDL.
         # Vamos usar f-strings para injetar o schema.
         
+        # Determina a tabela de votação do candidato a partir da config
+        config = importlib.import_module('config')
+        candidate_slug = getattr(config, 'CANDIDATE_SLUG', 'khury')
+        vot_table = f"votacao_dep_{candidate_slug}"
+
         queries = [
             f"""
-            DROP TABLE IF EXISTS {self.schema}.votacao_dep_traiano;
-            CREATE TABLE {self.schema}.votacao_dep_traiano (
+            DROP TABLE IF EXISTS {self.schema}.{vot_table};
+            CREATE TABLE {self.schema}.{vot_table} (
                 id_municipio int,
-                percentual_traiano float
+                percentual_candidato float
             );
             """,
             f"""
@@ -104,10 +110,17 @@ class DatabaseManager:
                 self.conn.rollback()
 
         # Tratamento especial para arquivos COM header
-        mappings_with_header = [
-            (PROCESSED_FILES["votacao_dep_traiano"], "votacao_dep_traiano"),
-            (PROCESSED_FILES["rais"], "rais_agg"),
-        ]
+        # Carrega arquivos com header: votacao do candidato e rais agregada
+        mappings_with_header = []
+        # Adiciona o arquivo de votação do candidato, se existir na configuração
+        candidate_key = None
+        for k in PROCESSED_FILES.keys():
+            if k.startswith('votacao_dep_'):
+                candidate_key = k
+                break
+        if candidate_key:
+            mappings_with_header.append((PROCESSED_FILES[candidate_key], vot_table))
+        mappings_with_header.append((PROCESSED_FILES["rais"], "rais_agg"))
         
         for file_path, table_name in mappings_with_header:
             print(f"-> Carregando {table_name} (com header)...")

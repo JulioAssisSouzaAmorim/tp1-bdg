@@ -11,6 +11,10 @@ def process_voting_data():
             usecols=["CD_MUNICIPIO", "DS_CARGO", "NM_VOTAVEL", "QT_VOTOS"]
         )
 
+        candidate_name = __import__('config').CANDIDATE_NAME
+        candidate_slug = __import__('config').CANDIDATE_SLUG
+        out_key = f"votacao_dep_{candidate_slug}"
+
         # Filtra apenas para o cargo de Deputado Estadual
         df_dep = df_votacao[df_votacao["DS_CARGO"] == "DEPUTADO ESTADUAL"].copy()
 
@@ -19,32 +23,32 @@ def process_voting_data():
         total_votos_mun.rename(columns={"QT_VOTOS": "total_votos_dep_est"}, inplace=True)
 
         # Calcula os votos para o candidato específico por município
-        df_traiano = df_dep[df_dep["NM_VOTAVEL"] == "ADEMAR LUIZ TRAIANO"].copy()
-        votos_traiano_mun = df_traiano.groupby("CD_MUNICIPIO")["QT_VOTOS"].sum().reset_index()
-        votos_traiano_mun.rename(columns={"QT_VOTOS": "votos_traiano"}, inplace=True)
+        df_cand = df_dep[df_dep["NM_VOTAVEL"] == candidate_name].copy()
+        votos_cand_mun = df_cand.groupby("CD_MUNICIPIO")["QT_VOTOS"].sum().reset_index()
+        votos_cand_mun.rename(columns={"QT_VOTOS": "votos_candidato"}, inplace=True)
 
         # Junta os dados e calcula o percentual
-        df_agg = pd.merge(total_votos_mun, votos_traiano_mun, on="CD_MUNICIPIO", how="left")
-        df_agg["votos_traiano"].fillna(0, inplace=True) # Municípios onde ele não teve votos
-        df_agg["percentual_traiano"] = (df_agg["votos_traiano"] / df_agg["total_votos_dep_est"]) * 100
+        df_agg = pd.merge(total_votos_mun, votos_cand_mun, on="CD_MUNICIPIO", how="left")
+        df_agg["votos_candidato"].fillna(0, inplace=True)
+        df_agg["percentual_candidato"] = (df_agg["votos_candidato"] / df_agg["total_votos_dep_est"]) * 100
 
         # Mapeia o código do TSE para o do IBGE
         df_mapa = pd.read_csv(FILES["mapa_cod"], usecols=["id_municipio_tse", "id_municipio_ibge"])
         df_final = pd.merge(df_agg, df_mapa, left_on="CD_MUNICIPIO", right_on="id_municipio_tse")
         
         # Seleciona e renomeia colunas finais
-        df_final = df_final[["id_municipio_ibge", "percentual_traiano"]]
+        df_final = df_final[["id_municipio_ibge", "percentual_candidato"]]
         df_final.rename(columns={"id_municipio_ibge": "id_municipio"}, inplace=True)
 
         # Salva o arquivo processado
-        df_final.to_csv(PROCESSED_FILES["votacao_dep_traiano"], index=False, header=True, sep=";")
-        print(f"Arquivo de votação para Dep. Traiano salvo em: {PROCESSED_FILES['votacao_dep_traiano']}")
+        df_final.to_csv(PROCESSED_FILES[out_key], index=False, header=True, sep=";")
+        print(f"Arquivo de votação para {candidate_name} salvo em: {PROCESSED_FILES[out_key]}")
 
     except Exception as e:
         print(f"Um erro ocorreu ao processar os dados de votação: {e}")
         # Cria um arquivo vazio com header para o pipeline não quebrar
-        pd.DataFrame(columns=["id_municipio", "percentual_traiano"]).to_csv(
-            PROCESSED_FILES["votacao_dep_traiano"], index=False, header=True, sep=";"
+        pd.DataFrame(columns=["id_municipio", "percentual_candidato"]).to_csv(
+            PROCESSED_FILES[out_key], index=False, header=True, sep=";"
         )
 
 def process_census_municipio():

@@ -7,6 +7,7 @@ from mgwr.gwr import GWR, MGWR
 from mgwr.sel_bw import Sel_BW
 from libpysal.weights import DistanceBand
 import numpy as np
+import importlib
 
 # Ignorar warnings futuros
 warnings.simplefilter(action='ignore', category=FutureWarning)
@@ -32,10 +33,16 @@ except Exception as e:
 
 def fetch_data():
     """
-    Busca dados socioeconômicos e de votação para o Dep. Traiano.
+    Busca dados socioeconômicos e de votação para o candidato configurado.
     """
     print("Buscando dados para a análise GWR...")
-    
+    config = importlib.import_module('db_builder.config')
+    candidate_slug = getattr(config, 'CANDIDATE_SLUG', 'candidate')
+    candidate_name = getattr(config, 'CANDIDATE_NAME', 'CANDIDATE')
+
+    vot_table = f"votacao_dep_{candidate_slug}"
+
+    # Use the candidate-specific processed table and a generic column name 'percentual_candidato'
     query = f"""
     SELECT
         g."CD_MUN" AS cd_municipio_ibge,
@@ -44,12 +51,12 @@ def fetch_data():
         c.idade_mediana,
         r.remuneracao_media,
         e.cobertura_pop_4g5g,
-        v.percentual_traiano
+            v.percentual_candidato
     FROM {DB_CONFIG['schema']}.municipios_pr_2022 g
     LEFT JOIN {DB_CONFIG['schema']}.censo_mun c ON CAST(g."CD_MUN" AS INTEGER) = c.id_municipio
     LEFT JOIN {DB_CONFIG['schema']}.rais_agg r ON CAST(g."CD_MUN" AS INTEGER) = r.id_municipio
     LEFT JOIN {DB_CONFIG['schema']}.extra e ON CAST(g."CD_MUN" AS INTEGER) = e.id_municipio
-    LEFT JOIN {DB_CONFIG['schema']}.votacao_dep_traiano v ON CAST(g."CD_MUN" AS INTEGER) = v.id_municipio;
+        LEFT JOIN {DB_CONFIG['schema']}.{vot_table} v ON CAST(g."CD_MUN" AS INTEGER) = v.id_municipio;
     """
     
     try:
@@ -60,8 +67,9 @@ def fetch_data():
             'idade_mediana': 'Idade_Mediana',
             'remuneracao_media': 'Renda_Media_SM',
             'cobertura_pop_4g5g': 'Cobertura_4G_5G',
-            'percentual_traiano': 'Votos_Traiano_Perc'
+                'percentual_candidato': 'Votos_Khury_Perc'
         }, inplace=True)
+        gdf['CANDIDATE_NAME'] = candidate_name
         return gdf
     except Exception as e:
         print(f"Erro ao buscar dados: {e}")
@@ -74,7 +82,7 @@ def preprocess_for_gwr(gdf):
     print("Pré-processando dados para GWR...")
     
     # Variáveis independentes (X) e dependente (Y)
-    y_name = 'Votos_Traiano_Perc'
+    y_name = 'Votos_Khury_Perc'
     x_names = ['Taxa_Alfabetizacao', 'Idade_Mediana', 'Renda_Media_SM', 'Cobertura_4G_5G']
     
     # Remove linhas com valores nulos em qualquer uma das variáveis de interesse
@@ -133,10 +141,20 @@ def analyze_and_visualize(gdf, gwr_results, x_names):
     plt.savefig('gwr_mapa_r2_local.png', dpi=300)
     print("  - Mapa de R² Local salvo em 'gwr_mapa_r2_local.png'.")
     
-    # Mapas de Coeficientes
-    # Adiciona os coeficientes ao GDF
+    # Mapas de Coeficientes: adiciona os coeficientes locais ao GeoDataFrame
+    coef_arrays = []
     for i, var_name in enumerate(x_names):
-        gdf[f'coef_{var_name}'] = gwr_results.params[:, i+1] # Pula o intercepto
+        arr = gwr_results.params[:, i+1]
+        gdf[f'coef_{var_name}'] = arr
+        coef_arrays.append(arr)
+
+    # Normaliza a escala de cores entre todos os coeficientes (simétrica em torno de zero)
+    all_coefs = np.concatenate(coef_arrays)
+    # Usa percentis para aumentar o contraste visual
+    p5 = np.nanpercentile(all_coefs, 5)
+    p95 = np.nanpercentile(all_coefs, 95)
+    max_abs = max(abs(p5), abs(p95))
+    vmin, vmax = -max_abs, max_abs
 
     # Define o número de colunas para o subplot
     n_vars = len(x_names)
@@ -144,83 +162,21 @@ def analyze_and_visualize(gdf, gwr_results, x_names):
     n_rows = int(np.ceil(n_vars / n_cols))
 
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 7 * n_rows))
-    axes = axes.flatten() # Transforma a matriz de eixos em um array 1D
+    axes = axes.flatten()
 
     for i, var_name in enumerate(x_names):
         ax = axes[i]
-        gdf.plot(column=f'coef_{var_name}', ax=ax, legend=True, cmap='coolwarm',
+        gdf.plot(column=f'coef_{var_name}', ax=ax, legend=True, cmap='coolwarm', vmin=vmin, vmax=vmax,
                  legend_kwds={'label': f"Coeficiente de {var_name}", 'orientation': "horizontal"})
         ax.set_title(f'Influência da "{var_name.replace("_", " ")}" no Voto')
         ax.set_axis_off()
 
-    # Oculta eixos não utilizados
     for i in range(n_vars, len(axes)):
         axes[i].set_axis_off()
 
     plt.tight_layout()
     plt.savefig('gwr_mapas_coeficientes.png', dpi=300)
     print("  - Mapas de coeficientes salvos em 'gwr_mapas_coeficientes.png'.")
-
-def generate_report(gwr_results):
-    """
-    Gera um arquivo Markdown com a análise dos resultados GWR.
-    """
-    print("Gerando relatório da análise GWR...")
-    
-    report_content = f"""
-# Proposta de Texto para a Seção 5.6 (Análise Extra)
-
-**Instruções:** Substitua o conteúdo da seção 5.6 do seu PDF por este texto. As imagens geradas (`gwr_mapa_r2_local.png` e `gwr_mapas_coeficientes.png`) devem ser inseridas onde indicado.
-
----
-
-### **5.6. Análise Extra: Regressão Geograficamente Ponderada (GWR)**
-
-As análises anteriores, como a de correlação, estabeleceram relações globais entre variáveis. No entanto, em geografia, é raro que uma relação se mantenha constante em todo o espaço. Para aprofundar a análise, esta seção emprega a Regressão Geograficamente Ponderada (GWR), uma técnica espacial que constrói um modelo de regressão local para cada município.
-
-O objetivo é responder à pergunta: **"Quais fatores socioeconômicos melhor explicam o sucesso do deputado estadual mais votado (Ademar Traiano), e a importância desses fatores é a mesma em todo o estado?"**
-
-#### **5.6.1. Metodologia**
-
-A GWR estima um modelo de regressão para cada ponto no espaço (neste caso, cada município), ponderando as observações vizinhas. Isso nos permite ver como os coeficientes de regressão (a "influência" de cada variável) mudam de uma região para outra.
-
-*   **Variável Dependente (Y):** Percentual de votos válidos para o Dep. Ademar Traiano.
-*   **Variáveis Independentes (X):** Taxa de Alfabetização, Idade Mediana, Renda Média (SM) e Cobertura 4G/5G.
-
-O modelo foi calibrado usando uma função de kernel adaptativa para encontrar a vizinhança ótima para cada regressão local.
-
-#### **5.6.2. Resultados e Análise**
-
-Um dos principais resultados da GWR é o **R² Local**, que mede o quão bem o modelo explica a variação nos votos em cada município específico. Valores mais altos (próximos de 1) indicam um alto poder de explicação.
-
-**(Insira aqui a imagem `gwr_mapa_r2_local.png`)**
-*Figura X: Mapa do R² Local. Áreas mais claras indicam onde o modelo socioeconômico explica melhor a votação no candidato.*
-
-O mapa de R² Local mostra que o modelo tem um poder explicativo variável, sendo mais forte em certas regiões (manchas amarelas) e mais fraco em outras (manchas roxas). Isso confirma a hipótese de que as relações entre voto e fatores socioeconômicos não são espacialmente constantes.
-
-Mais importante, a GWR nos permite mapear os coeficientes de cada variável, visualizando onde cada fator teve uma influência positiva (em azul), negativa (em vermelho) ou neutra (próximo de zero) sobre o voto.
-
-**(Insira aqui a imagem `gwr_mapas_coeficientes.png`)**
-*Figura Y: Mapas dos coeficientes locais para cada variável explicativa.*
-
-Analisando os mapas de coeficientes, podemos inferir:
-
-*   **Renda Média:** Em grande parte do estado, a relação é positiva (azul), sugerindo que municípios com maior renda tenderam a votar mais no candidato. No entanto, em algumas áreas específicas, essa relação se inverte ou se torna nula.
-*   **Idade Mediana:** A influência da idade do eleitorado varia drasticamente. Há regiões onde uma população mais velha favoreceu o candidato (azul) e outras onde o desfavoreceu (vermelho), mostrando a complexidade da relação entre idade e voto.
-*   **Taxa de Alfabetização e Cobertura 4G/5G:** Analise os mapas correspondentes. Por exemplo: "A taxa de alfabetização parece ter uma influência consistentemente positiva em todo o estado, enquanto a cobertura de internet mostra uma relação mais complexa e regionalizada."
-
-#### **5.6.3. Conclusão da Análise Extra**
-
-A aplicação da Regressão Geograficamente Ponderada (GWR) demonstrou que a relação entre os fatores socioeconômicos e o percentual de votos no deputado estadual mais votado não é uniforme no Paraná. A influência de variáveis como renda e idade muda significativamente de uma região para outra.
-
-Esta análise avança em relação aos métodos globais (como a correlação de Pearson) ao incorporar a "não-estacionariedade espacial" dos fenômenos sociais. Ela fornece uma ferramenta poderosa para entender as nuances regionais do comportamento eleitoral, constituindo uma análise extra robusta e geograficamente sofisticada, perfeitamente alinhada aos objetivos da disciplina.
-
----
-"""
-    
-    with open('RELATORIO_ANALISE_EXTRA.md', 'w', encoding='utf-8') as f:
-        f.write(report_content)
-    print("  - Relatório GWR salvo em 'RELATORIO_ANALISE_EXTRA.md'.")
 
 
 def main():
@@ -241,10 +197,8 @@ def main():
     
     analyze_and_visualize(gdf_clean, gwr_results, x_names)
     
-    generate_report(gwr_results)
-    
     print("\n--- Análise GWR concluída com sucesso! ---")
-    print("Arquivos gerados: 'gwr_mapa_r2_local.png', 'gwr_mapas_coeficientes.png', 'RELATORIO_ANALISE_EXTRA.md'")
+    print("Arquivos gerados: 'gwr_mapa_r2_local.png', 'gwr_mapas_coeficientes.png'")
 
 if __name__ == "__main__":
     main()

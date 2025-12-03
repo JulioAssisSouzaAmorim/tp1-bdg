@@ -1,4 +1,6 @@
 import os
+import unicodedata
+import re
 
 # --- Caminhos de Diretórios ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -23,13 +25,29 @@ FILES = {
 
 # --- Arquivos de Saída (Processados) ---
 PROCESSED_FILES = {
-    # Novo arquivo para a votação do deputado estadual específico
-    "votacao_dep_traiano": os.path.join(PROCESSED_DIR, "votacao_dep_traiano.csv"),
+    # Arquivo para a votação do deputado estadual específico (gerado dinamicamente abaixo)
+    # A chave "votacao_dep_candidate" será criada a partir de CANDIDATE_NAME
     "censo_mun": os.path.join(PROCESSED_DIR, "censo_mun_processado.csv"),
     "censo_sec": os.path.join(PROCESSED_DIR, "censo_sec_processado.csv"),
     "rais": os.path.join(PROCESSED_DIR, "rais_processado.csv"),
     "extra": os.path.join(PROCESSED_DIR, "extra_processado.csv"),
 }
+
+# --- Configuração do candidato alvo (editar conforme necessário) ---
+# Nome exato como aparece no arquivo de votação (geralmente em MAIÚSCULAS)
+CANDIDATE_NAME = "ALEXANDRE MARANHÃO KHURY"
+
+def _slugify(name: str) -> str:
+    # Remove acentos e caracteres não alfanuméricos, converte para minúsculas
+    nfkd = unicodedata.normalize('NFKD', name)
+    only_ascii = ''.join([c for c in nfkd if not unicodedata.combining(c)])
+    slug = re.sub(r'[^0-9a-zA-Z]+', '_', only_ascii).strip('_').lower()
+    return slug
+
+CANDIDATE_SLUG = _slugify(CANDIDATE_NAME)
+
+# Arquivo processado para os votos do candidato alvo
+PROCESSED_FILES[f"votacao_dep_{CANDIDATE_SLUG}"] = os.path.join(PROCESSED_DIR, f"votacao_dep_{CANDIDATE_SLUG}.csv")
 
 # --- Configurações do Banco de Dados ---
 # Altere conforme suas credenciais reais ou use variáveis de ambiente
